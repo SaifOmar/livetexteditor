@@ -1,0 +1,7 @@
+node_modules/
+drizzle/
+rest/
+*.http
+*.rest
+*.db
+.env
