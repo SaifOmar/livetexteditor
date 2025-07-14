@@ -1,16 +1,11 @@
 import {Router} from "express";
 import {home} from "../controllers/homeController";
 import {login, register} from "../controllers/auth/authController";
-import {getDocById, getDocs} from "../controllers/docs/docsController";
-import {authenticationMiddleware} from "../middlewares/authenticationMiddleware";
 
 const router = Router();
 
 router.get("/", home);
 router.post("/login", login);
 router.post("/register", register);
-
-router.get("/docs", authenticationMiddleware, getDocs);
-router.get("/docs/:id", authenticationMiddleware, getDocById);
 
 export default router;
