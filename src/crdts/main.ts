@@ -1,9 +1,11 @@
-import crypto from "crypto";
+import {createRandomDocId} from "../helpers/helper";
 
 class Character {
 	constructor(
+		// id is an id of the character with the first part of it being the index and the second part is the client id
 		public id: string,
 		public value: string,
+		// afterId is the id of the character that this character comes after
 		public afterId: string | null,
 		public timestamp: Date,
 		public deleted: boolean = false,
@@ -16,7 +18,7 @@ class Character {
 class Doc {
 	constructor(
 		public text: Character[],
-		public id: string = crypto.randomUUID(),
+		public uuid: string = createRandomDocId(),
 		public changed: boolean = false,
 		private opLog: any[] = [],
 		private changes: Character[] = [],
@@ -107,10 +109,20 @@ function update(op: any, text: Character[]): any[] {
 	return [text, "failed"];
 }
 
-function computeId(clientId: number, afterId: string): string {
+function computeId(clientId: string, afterId: string | null): string {
 	if (afterId === null) return `1-${clientId}`;
 	const [oldId, _] = afterId.split("-");
 	return `${parseInt(oldId) + 1}-${clientId}`;
 }
 
-export {Doc, Character};
+function loadChararcters(text: string, clientId: string): Character[] {
+	return text.split("").map((char, index) => {
+		return new Character(computeId(clientId, index === 0 ? null : `${index}-A`), char, index === 0 ? null : `${index - 1}-1`, new Date());
+	});
+}
+
+function loadDoc(uuid: string, text: string, clientId: string): Doc {
+	const docText = loadChararcters(text, clientId);
+	return new Doc(docText, uuid);
+}
+export {Doc, Character, loadDoc};

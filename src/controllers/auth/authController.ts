@@ -14,7 +14,6 @@ export const login = async (req: Request, res: Response, next: NextFunction) => 
 			return;
 		}
 		const token = createToken({email: user.email, id: user.id});
-		console.log(token);
 		res.status(200).json({message: "Login successful", access: token});
 	} catch (error) {
 		next(error);
@@ -39,10 +38,8 @@ export const register = async (req: Request, res: Response, next: NextFunction) 
 			createdAt: new Date().toISOString(),
 			updatedAt: new Date().toISOString(),
 		};
-		const email = registerData.email;
-		console.log(email);
 		const result = await db.insert(Users).values(user);
-		if (result) {
+		if (result.rowsAffected === 1) {
 			const token = createToken({email: user.email, id: user.id});
 			res.status(201).json({message: "Register successful", access: token});
 		}
