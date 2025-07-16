@@ -10,3 +10,4 @@ const server = app.listen(config.port, () => {
 const io = new Server(server, {cors: {origin: "*"}});
 setUpSocket(io);
 export default io;
+module.exports = io;

@@ -1,5 +1,14 @@
 import {createRandomDocId} from "../helpers/helper";
 
+interface Operation {
+	type: string;
+	char: Character | string;
+	clientId: string;
+	afterId: string | null;
+	timestamp: Date;
+	commited: boolean;
+}
+
 class Character {
 	constructor(
 		// id is an id of the character with the first part of it being the index and the second part is the client id
@@ -20,7 +29,7 @@ class Doc {
 		public text: Character[],
 		public uuid: string = createRandomDocId(),
 		public changed: boolean = false,
-		private opLog: any[] = [],
+		private opLog: Operation[] = [],
 		private changes: Character[] = [],
 	) {}
 	public toString() {
@@ -35,16 +44,20 @@ class Doc {
 		if (!char) throw new Error("Character not found");
 		return char;
 	}
-	public insert(char: string, clientId: string, timestamp: Date, afterId: string | null) {
+	public insert(operation: Operation) {
 		this.changed = true;
-		this.opLog.push({type: "insert", char: char, clientId: clientId, afterId: afterId, timestamp: timestamp, commited: false});
+		this.opLog.push(operation);
+		return this;
 	}
-	public delete(clientId: string, timestamp: Date, char: Character) {
+	public delete(operation: Operation) {
 		this.changed = true;
-		this.opLog.push({type: "delete", char: char, clientId: clientId, afterId: null, timestamp: timestamp, commited: false});
+		this.opLog.push(operation);
+		return this;
 	}
-	public sendNewUpdate(type: string, clientId: string, char: Character, afterId: string, timestamp: Date) {
-		this.opLog.push({type: type, char: char, clientId: clientId, afterId: afterId, timestamp: timestamp, commited: false});
+	public sendNewUpdate(operation: Operation) {
+		this.changed = true;
+		this.opLog.push(operation);
+		return this;
 	}
 	public getOpLog(): any[] {
 		return this.opLog;
@@ -53,22 +66,15 @@ class Doc {
 		const opLog = this.getOpLog().sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
 		opLog.forEach((op) => {
 			const [text, result] = update(op, this.text);
-			this.text = text;
 			if (result !== "failed" || result !== "not_found") {
+				this.text = text;
 				op.commited = true;
 				this.addChange(op.char);
 			}
 		});
 		this.changed = false;
 		this.opLog = this.opLog.filter((op) => !op.commited);
-
-		// after updating the document, we save it to the databse
-		//
-		// try {
-		// 	await saveDocument(this);
-		// } catch (error) {
-		// 	console.log("Error saving document: ", error);
-		// }
+		return this;
 	}
 	private addChange(char: Character): void {
 		this.changes.push(char);
@@ -117,7 +123,12 @@ function computeId(clientId: string, afterId: string | null): string {
 
 function loadChararcters(text: string, clientId: string): Character[] {
 	return text.split("").map((char, index) => {
-		return new Character(computeId(clientId, index === 0 ? null : `${index}-A`), char, index === 0 ? null : `${index - 1}-1`, new Date());
+		return new Character(
+			computeId(clientId, index === 0 ? null : `${index}-${clientId}`), // Use index, not index + 1
+			char,
+			index === 0 ? null : `${index}-${clientId}`, // Reference to actual previous ID
+			new Date(),
+		);
 	});
 }
 
@@ -125,4 +136,5 @@ function loadDoc(uuid: string, text: string, clientId: string): Doc {
 	const docText = loadChararcters(text, clientId);
 	return new Doc(docText, uuid);
 }
-export {Doc, Character, loadDoc};
+
+export {Doc, Character, Operation, loadDoc, loadChararcters, computeId};

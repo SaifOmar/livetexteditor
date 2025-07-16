@@ -1,9 +1,11 @@
-import {db} from "../../helpers/db/dbHelpers";
+import {db, getUserFromDecodedToken} from "../../helpers/db/dbHelpers";
 import {Documents} from "../../models/documentModels";
 import {Request, Response, NextFunction} from "express";
 import {eq, sql} from "drizzle-orm";
-import {Doc, loadDoc} from "../../crdts/main";
+import {Doc, loadDoc, Operation} from "../../crdts/main";
 import {addDocToCache, getDocFromCache, deleteDocFromCache} from "../../crdts/cache";
+import {decodeToken} from "../../helpers/auth/authHelpers";
+import io from "../../server";
 
 export const getDocs = async (req: Request, res: Response, next: NextFunction) => {
 	try {
@@ -23,6 +25,13 @@ export const getDocs = async (req: Request, res: Response, next: NextFunction) =
 
 export const getDocByUUID = async (req: Request, res: Response, next: NextFunction) => {
 	try {
+		const token = req.headers.authorization;
+		const decodedToken = decodeToken(token!.split(" ")[1]);
+		const user = await getUserFromDecodedToken(decodedToken);
+		if (!user) {
+			res.status(401).json({message: "Unauthorized"});
+			return;
+		}
 		try {
 			const cachedDoc = getDocFromCache(req.params.uuid);
 			if (cachedDoc !== undefined) {
@@ -34,6 +43,7 @@ export const getDocByUUID = async (req: Request, res: Response, next: NextFuncti
 					// opLog: loadedDoc.getOpLog(),
 				};
 				res.json(ob);
+				io.emit("join-doc", ob.uuid);
 				return;
 			} else {
 				const [doc] = await db
@@ -47,7 +57,7 @@ export const getDocByUUID = async (req: Request, res: Response, next: NextFuncti
 					return;
 				}
 
-				const loadedDoc = addDocToCache(loadDoc(doc.uuid, doc.text, "A"));
+				const loadedDoc = addDocToCache(loadDoc(doc.uuid, doc.text, user.clientId));
 				const ob = {
 					uuid: loadedDoc.uuid,
 					text: loadedDoc.toString(),
@@ -57,6 +67,7 @@ export const getDocByUUID = async (req: Request, res: Response, next: NextFuncti
 				};
 
 				res.json(ob);
+				io.emit("join-doc", ob.uuid);
 				return;
 			}
 		} catch (error) {
@@ -68,12 +79,19 @@ export const getDocByUUID = async (req: Request, res: Response, next: NextFuncti
 	}
 };
 export const storeDoc = async (req: Request, res: Response, next: NextFunction) => {
+	const token = req.headers.authorization;
+	const decodedToken = decodeToken(token!.split(" ")[1]);
+	const user = await getUserFromDecodedToken(decodedToken);
+	if (!user) {
+		res.status(401).json({message: "Unauthorized"});
+		return;
+	}
 	try {
 		const docUUID = new Doc([]).uuid;
 		const newDoc: typeof Documents.$inferInsert = {
 			uuid: docUUID,
 			// need a way to get the user from the request
-			user_id: 1,
+			user_id: user.id,
 			text: "",
 			createdAt: new Date().toISOString(),
 			updatedAt: new Date().toISOString(),
@@ -91,24 +109,52 @@ export const storeDoc = async (req: Request, res: Response, next: NextFunction) 
 };
 export const updateDoc = async (req: Request, res: Response, next: NextFunction) => {
 	try {
-		const [doc] = await db
-			.select({
-				uuid: Documents.uuid,
-				createdAt: Documents.createdAt,
-				updatedAt: Documents.updatedAt,
-			})
-			.from(Documents)
-			.where(eq(Documents.uuid, req.params.uuid))
-			.limit(1);
-		if (!doc) {
-			res.status(404).json({message: "Document not found"});
+		const token = req.headers.authorization;
+		const decodedToken = decodeToken(token!.split(" ")[1]);
+		const user = await getUserFromDecodedToken(decodedToken);
+		const cachedDoc = getDocFromCache(req.params.uuid);
+		console.log("user.client id : ", user.clientId);
+
+		if (cachedDoc !== undefined) {
+			console.log("cache hit");
+			const operation: Operation = {
+				type: "insert",
+				char: "l",
+				clientId: user.clientId,
+				afterId: "2-default",
+				timestamp: new Date(),
+				commited: false,
+			};
+			const updatedCachedDoc = cachedDoc.sendNewUpdate(operation).updateDoc();
+			io.emit("update-doc-server", updatedCachedDoc, req.body.text);
+			await db.insert(Documents).values({uuid: updatedCachedDoc.uuid, text: updatedCachedDoc.toString(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()});
+			res.status(200).json({message: "Document updated", doc: {uuid: updatedCachedDoc.uuid, text: updatedCachedDoc.toString(), changes: updatedCachedDoc.getChanges()}});
+			return;
+		} else {
+			console.log("cache miss");
+
+			// load the doc from the db and add it  to the cache then update it and return updated to socket
+			//
+			const [doc] = await db
+				.select({
+					uuid: Documents.uuid,
+					text: Documents.text,
+					createdAt: Documents.createdAt,
+					updatedAt: Documents.updatedAt,
+				})
+				.from(Documents)
+				.where(eq(Documents.uuid, req.params.uuid))
+				.limit(1);
+			if (!doc) {
+				res.status(404).json({message: "Document not found"});
+				return;
+			}
+			const cachedDoc = addDocToCache(loadDoc(doc.uuid, doc.text, user.clientId));
+			io.emit("update-doc-server", doc, req.body.text);
+			res.status(200).json({message: "Document updated", doc: {uuid: cachedDoc.uuid, text: cachedDoc.toString(), changes: cachedDoc.getChanges()}});
 			return;
 		}
-		const updated = await db.update(Documents).set({text: req.body.text, updatedAt: new Date().toISOString()}).where(eq(Documents.uuid, doc.uuid)).limit(1);
-		if (updated.rowsAffected === 1) {
-			res.status(200).json({message: "Document updated", doc: updated});
-		}
-		res.status(400).json({message: "Error updating document"});
+		// res.status(400).json({message: "Error updating document"});
 	} catch (error) {
 		next(error);
 	}

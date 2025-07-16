@@ -7,6 +7,10 @@ const app = express();
 app.use("/files", express.static("public"));
 app.use(express.json());
 
+app.use((req, res, next) => {
+	console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+	next();
+});
 // Routes
 app.use("", mainRoutes);
 app.use("/try", tryRoutes);
