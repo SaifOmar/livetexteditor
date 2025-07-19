@@ -1,6 +1,8 @@
 node_modules/
 drizzle/
 rest/
+logs/
+dist/
 *.http
 *.rest
 *.db
