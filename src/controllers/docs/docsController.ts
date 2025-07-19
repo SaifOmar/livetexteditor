@@ -6,6 +6,9 @@ import {Doc, loadDoc, Operation} from "../../crdts/main";
 import {addDocToCache, getDocFromCache, deleteDocFromCache} from "../../crdts/cache";
 import {decodeToken} from "../../helpers/auth/authHelpers";
 import io from "../../server";
+import config from "../../config/config";
+import Logger from "../../helpers/logger";
+const logger = Logger.getInstance(config.logFile);
 
 export const getDocs = async (req: Request, res: Response, next: NextFunction) => {
 	try {
@@ -35,15 +38,9 @@ export const getDocByUUID = async (req: Request, res: Response, next: NextFuncti
 		try {
 			const cachedDoc = getDocFromCache(req.params.uuid);
 			if (cachedDoc !== undefined) {
-				const ob = {
-					uuid: cachedDoc.uuid,
-					text: cachedDoc.toString(),
-					changes: cachedDoc.getChanges(),
-					// changed: loadedDoc.changed,
-					// opLog: loadedDoc.getOpLog(),
-				};
-				res.json(ob);
-				io.emit("join-doc", ob.uuid);
+				logger.info(`Doc ${req.params.uuid} found in cache`);
+				res.json(cachedDoc);
+				io.emit("join-doc", cachedDoc.uuid);
 				return;
 			} else {
 				const [doc] = await db
@@ -58,16 +55,9 @@ export const getDocByUUID = async (req: Request, res: Response, next: NextFuncti
 				}
 
 				const loadedDoc = addDocToCache(loadDoc(doc.uuid, doc.text, user.clientId));
-				const ob = {
-					uuid: loadedDoc.uuid,
-					text: loadedDoc.toString(),
-					changes: loadedDoc.getChanges(),
-					// changed: loadedDoc.changed,
-					// opLog: loadedDoc.getOpLog(),
-				};
-
-				res.json(ob);
-				io.emit("join-doc", ob.uuid);
+				logger.info(`Doc ${req.params.uuid} addet to cache`);
+				res.json(loadedDoc);
+				io.emit("join-doc", loadedDoc.uuid);
 				return;
 			}
 		} catch (error) {
@@ -87,19 +77,19 @@ export const storeDoc = async (req: Request, res: Response, next: NextFunction) 
 		return;
 	}
 	try {
-		const docUUID = new Doc([]).uuid;
+		const doc = new Doc([]);
 		const newDoc: typeof Documents.$inferInsert = {
-			uuid: docUUID,
-			// need a way to get the user from the request
+			uuid: doc.uuid,
 			user_id: user.id,
 			text: "",
 			createdAt: new Date().toISOString(),
 			updatedAt: new Date().toISOString(),
 		};
-		const doc = await db.insert(Documents).values(newDoc);
-		if (doc.rowsAffected === 1) {
-			const [restultDoc] = await db.select().from(Documents).where(eq(Documents.uuid, docUUID)).limit(1);
-			res.status(201).json({message: "Document stored", doc: restultDoc});
+		const dbDoc = await db.insert(Documents).values(newDoc);
+		if (dbDoc.rowsAffected === 1) {
+			addDocToCache(doc);
+			logger.info(`Doc ${doc.uuid} stored`);
+			res.status(201).json({message: "Document stored", doc: doc});
 			return;
 		}
 		res.status(400).json({message: "Error storing document"});
@@ -119,22 +109,21 @@ export const updateDoc = async (req: Request, res: Response, next: NextFunction)
 			console.log("cache hit");
 			const operation: Operation = {
 				type: "insert",
-				char: "l",
+				payload: "c",
+				prevPosition: null,
+				nextPosition: null,
 				clientId: user.clientId,
-				afterId: "2-default",
 				timestamp: new Date(),
 				commited: false,
 			};
-			const updatedCachedDoc = cachedDoc.sendNewUpdate(operation).updateDoc();
+			const updatedCachedDoc = cachedDoc.insert("c", 10).insert("x", 1).insert("a", 4).updateDoc();
 			io.emit("update-doc-server", updatedCachedDoc, req.body.text);
 			await db.insert(Documents).values({uuid: updatedCachedDoc.uuid, text: updatedCachedDoc.toString(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()});
 			res.status(200).json({message: "Document updated", doc: {uuid: updatedCachedDoc.uuid, text: updatedCachedDoc.toString(), changes: updatedCachedDoc.getChanges()}});
 			return;
 		} else {
 			console.log("cache miss");
-
 			// load the doc from the db and add it  to the cache then update it and return updated to socket
-			//
 			const [doc] = await db
 				.select({
 					uuid: Documents.uuid,
@@ -159,8 +148,11 @@ export const updateDoc = async (req: Request, res: Response, next: NextFunction)
 		next(error);
 	}
 };
+
 export const deleteDoc = async (req: Request, res: Response, next: NextFunction) => {
 	try {
+		deleteDocFromCache(req.params.uuid);
+		io.emit("doc-deleted", req.params.uuid);
 		const [doc] = await db
 			.select({
 				uuid: Documents.uuid,
@@ -176,7 +168,6 @@ export const deleteDoc = async (req: Request, res: Response, next: NextFunction)
 		}
 		const deleted = await db.delete(Documents).where(eq(Documents.uuid, doc.uuid)).limit(1);
 		if (deleted.rowsAffected === 1) {
-			deleteDocFromCache(req.params.uuid);
 			res.status(200).json({message: "Document deleted", doc: deleted});
 		}
 		res.status(400).json({message: "Error deleting document"});

@@ -7,6 +7,7 @@ interface Config {
 	nodeEnv: string;
 	jwtSecret: string;
 	dbFileName: string;
+	logFile: string;
 }
 
 const config: Config = {
@@ -14,6 +15,7 @@ const config: Config = {
 	nodeEnv: process.env.NODE_ENV || "development",
 	jwtSecret: process.env.JWT_SECRET || "supersecretkey",
 	dbFileName: process.env.DB_FILE_NAME || "file:database.db",
+	logFile: process.env.LOG_FILE || "logs.log",
 };
 
 export default config;
